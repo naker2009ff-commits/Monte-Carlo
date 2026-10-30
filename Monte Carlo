@@ -171,6 +171,6 @@ plt.title("Бутстрэп")
 plt.xlabel("Дни вперёд")
 
 plt.tight_layout()
-plt.savefig("paths.png", dpi=150)
+plt.savefig("Monte_Carlo and_bootstrap Monte Carlo.png", dpi=150)
 
 plt.show()

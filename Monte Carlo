@@ -1,0 +1,176 @@
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
+import matplotlib.pyplot as plt
+#загрузка данных из файла
+def load_data(data="DCOILBRENTEU.csv", years=10):
+    price = np.genfromtxt(data, delimiter=",", skip_header=1, usecols=1)
+    date = np.genfromtxt(data, delimiter=",", skip_header=1, usecols=0, dtype=str)
+    mask = ~np.isnan(price)
+    price = price[mask][-years * 252:]
+    date = date[mask][-years * 252:]
+    return price, date
+oil = load_data()[0]
+#логарифмическая доходность и средняя годовая логарифмическая доходность
+def returns_log (price, year=False, mean=False, std=False):
+    returns = np.diff(np.log(price))
+    if year:
+        returns = returns.mean() * 252
+    if mean:
+        returns = returns.mean()
+    if std:
+        returns = returns.std()
+    return returns
+# волатильность годовая и обычная
+def volatility(price, year=False):                          
+    returs = np.diff(np.log(price))
+    vol = returs.std()
+    if year:
+        vol = vol * np.sqrt(252)
+    return vol
+#var калькулятор 
+def var(price, var):
+    returns = np.diff(np.log(price))
+    var = np.percentile(returns,var)
+    return var
+#95 var
+#print(var(oil,5))
+#5 var
+#print(var(oil,95))
+def CVaR(price, var):
+    returns = np.diff(np.log(price))
+    var = np.percentile(returns,var)
+    CVaR = returns[returns <= var].mean()
+    return CVaR
+#CVaR
+#print(CVaR(oil,5))
+#скользящая волатильность
+vol = sliding_window_view(returns_log(oil), 20).std(axis=1)
+vol_year = vol * np.sqrt(252)
+#Monte Carlo simulation
+#подготовка параметров симуляции
+ndays = 20
+nwalks= 10000
+start = oil[-1]
+barrier = start * 0.85
+#симуляция
+rng = np.random.default_rng(seed=7)
+simulation= rng.normal(returns_log(oil, mean=True), returns_log(oil, std=True), size=(nwalks, ndays))
+#превращение в цены
+prices = start * np.exp(np.cumsum(simulation, axis=1))
+#цена через 20 дней  
+price_20_days = prices[:, -1]
+per_5_price_20_days = np.percentile(price_20_days, 5)
+per_95_price_20_days = np.percentile(price_20_days, 95)
+#цена через 20 дней ниже порога
+price_20_days_low_barrier = (price_20_days < barrier).mean()
+#цена хотя бы раз опускалась ниже порога
+min_price = prices.min(axis=1)
+price_20_days_low_barrier_touch = (min_price < barrier).mean()
+#bootstrap Monte Carlo
+bootstrap = rng.choice(returns_log(oil), size=(nwalks, ndays))
+prices_bootstrap = start * np.exp(np.cumsum(bootstrap, axis=1))
+price_20_days_bootstrap = prices_bootstrap[:,-1]
+per_5_price_20_days_bootstrap = np.percentile(price_20_days_bootstrap, 5)
+per_95_price_20_days_bootstrap = np.percentile(price_20_days_bootstrap, 95)
+price_20_days_low_barrier_bootstrap = (price_20_days_bootstrap < barrier).mean()
+min_price_bootstrap = prices_bootstrap.min(axis=1)
+price_20_days_low_barrier_touch_bootstrap = (min_price_bootstrap < barrier).mean()
+ret_20 = price_20_days / start - 1
+ret_20_b = price_20_days_bootstrap / start - 1
+var_20 = np.percentile(ret_20, 5)
+var_20_b = np.percentile(ret_20_b, 5)
+print("результаты нормальной  симуляции")
+print("5-й перцентиль:", per_5_price_20_days)
+print("95-й перцентиль:",per_95_price_20_days)
+print("вероятность что цена будет ниже порога:",price_20_days_low_barrier)
+print("вероятность того что цена хоть раз будет ниже порога:",price_20_days_low_barrier_touch)
+print("var",var_20)
+print("CVaR:",ret_20[ret_20 <= var_20].mean())
+#результаты bootstrap Monte Carlo
+print("результаты bootstrap Monte Carlo")
+print('5-й перцентиль:',per_5_price_20_days_bootstrap)
+print("95-й перцентиль:",per_95_price_20_days_bootstrap)
+print("вероятность что цена будет ниже порога:",price_20_days_low_barrier_bootstrap)
+print("вероятность того что цена хоть раз будет ниже порога:",price_20_days_low_barrier_touch_bootstrap)
+print("var:",var_20_b)
+print("CVaR:",ret_20_b[ret_20_b <= var_20_b].mean())
+#худшие дни с датами 
+dates = load_data()[1]
+r_oil = returns_log(oil)
+bad_10_days =np.argsort(r_oil)
+bad_number_10_days = bad_10_days[:10]
+bad_10_days_returns = r_oil[bad_number_10_days]
+bad_10_dates = dates[bad_number_10_days + 1]
+dates_and_returns= zip(bad_10_dates,bad_10_days_returns)
+for d, r in dates_and_returns:
+    print(d, r)
+z_scores = (r_oil - r_oil.mean()) / r_oil.std()
+sigma_3_high = (np.abs(z_scores) > 3).sum()
+sigma_3_mean = (np.abs(z_scores) > 3).mean()
+
+# Бэктест VaR 95% прогноз на каждый день по предыдущим 250 дням
+windows = sliding_window_view(r_oil, 250)
+past = windows[:-1]          
+real = r_oil[250:]      
+
+var_hist = np.percentile(past, 5, axis=1)
+var_norm = past.mean(axis=1) - 1.645 * past.std(axis=1)
+
+breach_hist = real < var_hist     
+breach_norm = real < var_norm
+
+print('исторический:',breach_hist.mean())
+print('нормальный:',breach_norm.mean())
+
+days = dates.astype("datetime64[D]")
+
+plt.figure(figsize=(12, 5))
+plt.plot(days[1:][19:], vol_year)
+plt.title("Нефть Brent: скользящая волатильность (20 дней)")
+plt.ylabel("Годовая волатильность")
+plt.tight_layout()
+plt.savefig("volatility.png", dpi=150)
+
+
+plt.figure(figsize=(10, 5))
+plt.hist(price_20_days, bins=60, alpha=0.5, label="Нормальная")
+plt.hist(price_20_days_bootstrap, bins=60, alpha=0.5, label="Бутстрэп")
+plt.axvline(barrier, color="red", linestyle="--", label="Порог −15%")
+plt.title("Цена нефти через 20 дней: 10 000 сценариев")
+plt.xlabel("Цена, $")
+plt.legend()
+plt.tight_layout()
+plt.savefig("price_distribution.png", dpi=150)
+
+
+plt.figure(figsize=(12, 5))
+bt_days = days[1:][250:]
+plt.plot(bt_days, real, color="grey", alpha=0.5, linewidth=0.7, label="Реальная доходность")
+plt.plot(bt_days, var_hist, label="Исторический VaR 95%")
+plt.plot(bt_days, var_norm, label="Нормальный VaR 95%")
+plt.scatter(bt_days[breach_hist], real[breach_hist], color="red", s=10, label="Пробои (исторический)")
+plt.title("Бэктест VaR 95% для нефти Brent")
+plt.ylabel("Дневная доходность")
+plt.legend()
+plt.tight_layout()
+plt.savefig("backtest.png", dpi=150)
+
+plt.figure(figsize=(14, 5))
+
+plt.subplot(1, 2, 1)
+plt.plot(prices[:100].T, alpha=0.3)
+plt.axhline(barrier, color="red", linestyle="--")
+plt.title("Нормальная модель")
+plt.xlabel("Дни вперёд")
+plt.ylabel("Цена, $")
+
+plt.subplot(1, 2, 2)
+plt.plot(prices_bootstrap[:100].T, alpha=0.3)
+plt.axhline(barrier, color="red", linestyle="--")
+plt.title("Бутстрэп")
+plt.xlabel("Дни вперёд")
+
+plt.tight_layout()
+plt.savefig("paths.png", dpi=150)
+
+plt.show()

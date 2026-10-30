@@ -12,5 +12,5 @@
 ![Volatility](volatility.png)
 ![Price distribution](price_distribution.png)
 ![Backtest](backtest.png)
-![Monte Carlo and bootstrap Monte Carlo](paths.png)
+![Paths](paths.png)
 
